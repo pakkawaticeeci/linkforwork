@@ -1,0 +1,730 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+    <meta charset="UTF-8">
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Cloud Work Dashboard (Google Sheets)</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Prompt:wght@300;400;500;600&display=swap" rel="stylesheet">
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/Sortable/1.15.0/Sortable.min.js"></script>
+
+    <style>
+        body { font-family: 'Prompt', sans-serif; background-color: #f3f4f6; }
+        .glass-panel { background: rgba(255, 255, 255, 0.95); backdrop-filter: blur(10px); border: 1px solid rgba(255, 255, 255, 0.2); transition: all 0.2s; }
+        .card-hover:hover { transform: translateY(-2px); box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1); }
+        .fade-in { animation: fadeIn 0.3s ease-in-out; }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+        .custom-scrollbar::-webkit-scrollbar { width: 6px; }
+        .custom-scrollbar::-webkit-scrollbar-track { background: #f1f1f1; }
+        .custom-scrollbar::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 10px; }
+        
+        /* Drag & Drop Styles */
+        .sortable-ghost { opacity: 0.4; background: #e0e7ff; border: 2px dashed #6366f1; }
+        .sortable-drag { cursor: grabbing; opacity: 1; background: #fff; transform: scale(1.02); box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1); z-index: 50; }
+        
+        #links-grid.editing-mode .draggable-item { cursor: grab; }
+        #links-grid.editing-mode .draggable-item:active { cursor: grabbing; }
+
+        .category-divider { grid-column: 1 / -1; }
+        .category-divider .divider-line { height: 1px; background: #cbd5e1; flex-grow: 1; }
+        
+        .icon-btn.selected { background-color: #e0e7ff; color: #4f46e5; border-color: #4f46e5; }
+        .color-btn:hover { transform: scale(1.1); }
+        .color-btn.selected { ring: 2px; transform: scale(1.15); box-shadow: 0 0 0 2px white, 0 0 0 4px currentColor; }
+        
+        .schedule-item { animation: fadeIn 0.2s; }
+
+        /* Loader Overlay */
+        #loader-overlay { background: rgba(255,255,255,0.8); backdrop-filter: blur(4px); z-index: 9999; }
+    </style>
+</head>
+<body class="min-h-screen flex flex-col text-slate-800">
+
+    <div id="loader-overlay" class="fixed inset-0 flex flex-col items-center justify-center transition-opacity duration-300">
+        <div class="animate-spin rounded-full h-12 w-12 border-b-2 border-indigo-600 mb-4"></div>
+        <p class="text-indigo-600 font-semibold animate-pulse" id="loader-text">กำลังเชื่อมต่อฐานข้อมูล...</p>
+    </div>
+
+    <nav class="bg-slate-900 text-white shadow-lg sticky top-0 z-40">
+        <div class="container mx-auto px-4 py-3 flex justify-between items-center">
+            <div class="flex items-center space-x-2">
+                <i data-lucide="cloud" class="w-6 h-6 text-sky-400"></i>
+                <h1 class="text-xl font-semibold tracking-wide">ลิงค์ลัด</h1> 
+            </div>
+            <div class="flex items-center space-x-4">
+                <div class="text-xs text-slate-400 hidden sm:block" id="current-date"></div>
+                <button onclick="toggleAdminMode()" id="admin-btn" class="flex items-center space-x-2 bg-slate-700 hover:bg-slate-600 px-4 py-2 rounded-lg transition-colors text-sm">
+                    <i data-lucide="edit-3" class="w-4 h-4" id="lock-icon"></i>
+                    <span id="admin-text">โหมดแก้ไข</span>
+                </button>
+            </div>
+        </div>
+    </nav>
+
+    <main class="container mx-auto px-4 py-8 flex-grow">
+        <div class="max-w-2xl mx-auto mb-10">
+            <div class="relative group">
+                <div class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                    <i data-lucide="search" class="w-5 h-5 text-slate-400"></i>
+                </div>
+                <input type="text" id="search-input" class="block w-full pl-10 pr-3 py-4 border-none rounded-xl bg-white shadow-sm focus:ring-2 focus:ring-indigo-500 outline-none text-lg" placeholder="ค้นหาลิงค์..." onkeyup="filterLinks()">
+            </div>
+        </div>
+
+        <div id="admin-toolbar" class="hidden mb-6 fade-in sticky top-20 z-30">
+            <div class="glass-panel p-4 rounded-xl shadow-lg border border-indigo-100">
+                <div class="flex flex-col md:flex-row justify-between items-center gap-4">
+                    <div class="flex items-center gap-3">
+                        <h2 class="text-lg font-semibold text-slate-700">เครื่องมือแก้ไข</h2>
+                        <span class="text-xs bg-indigo-100 text-indigo-700 px-2 py-1 rounded-full animate-pulse">ลากเพื่อเรียงลำดับได้</span>
+                    </div>
+                    
+                    <div class="flex flex-wrap gap-2 justify-center">
+                        <button onclick="refreshData()" class="bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-2 rounded-lg shadow text-sm flex items-center gap-2">
+                            <i data-lucide="refresh-cw" class="w-4 h-4"></i> รีโหลดข้อมูล
+                        </button>
+                        <div class="w-px h-8 bg-slate-300 mx-2 hidden md:block"></div>
+                        
+                        <button onclick="openCategoryModal()" class="bg-slate-600 hover:bg-slate-700 text-white px-4 py-2 rounded-lg shadow flex items-center gap-2 font-medium">
+                            <i data-lucide="rows" class="w-5 h-5"></i> เพิ่มหมวดหมู่
+                        </button>
+
+                        <button onclick="openAddModal()" class="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg shadow flex items-center gap-2 font-medium">
+                            <i data-lucide="plus-circle" class="w-5 h-5"></i> เพิ่มลิงค์
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div id="links-grid" class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4 pb-20"></div>
+
+        <div id="empty-state" class="hidden text-center py-20">
+            <div class="bg-white p-8 rounded-full inline-block mb-4 shadow-sm"><i data-lucide="ghost" class="w-12 h-12 text-slate-300"></i></div>
+            <h3 class="text-xl font-medium text-slate-600">ยังไม่มีข้อมูล</h3>
+            <p class="text-sm text-slate-400 mt-2">กดโหมดแก้ไขเพื่อเพิ่มข้อมูลแรก</p>
+        </div>
+    </main>
+
+    <footer class="bg-white border-t mt-auto py-6">
+        <div class="container mx-auto px-4 text-center text-slate-400 text-sm">
+            <p>&copy; <span id="year"></span> Cloud Workspace. Sync with Google Sheets.</p>
+        </div>
+    </footer>
+
+    <div id="link-modal" class="fixed inset-0 bg-black/50 z-50 hidden flex items-center justify-center backdrop-blur-sm opacity-0 transition-opacity duration-300">
+        <div class="bg-white rounded-2xl shadow-2xl w-full max-w-lg mx-4 transform scale-95 transition-transform duration-300 flex flex-col max-h-[90vh]" id="modal-content">
+            <div class="p-6 border-b flex justify-between items-center bg-slate-50 rounded-t-2xl">
+                <h3 class="text-xl font-bold text-slate-800" id="modal-title">เพิ่มลิงค์ใหม่</h3>
+                <button onclick="closeModal('link-modal')" class="text-slate-400 hover:text-red-500"><i data-lucide="x" class="w-6 h-6"></i></button>
+            </div>
+            <div class="p-6 overflow-y-auto custom-scrollbar">
+                <form id="link-form" onsubmit="handleFormSubmit(event)">
+                    <input type="hidden" id="edit-id">
+                    <div class="space-y-6">
+                        <div class="space-y-4">
+                            <div>
+                                <label class="block text-sm font-medium text-slate-700 mb-1">ชื่อเว็บไซต์</label>
+                                <input type="text" id="link-name" required class="w-full px-4 py-2 border rounded-lg outline-none focus:ring-2 focus:ring-indigo-500" placeholder="เช่น Google Drive">
+                            </div>
+                            <div>
+                                <label class="block text-sm font-medium text-slate-700 mb-1">URL</label>
+                                <div class="relative">
+                                    <i data-lucide="link" class="absolute left-3 top-2.5 w-4 h-4 text-slate-400"></i>
+                                    <input type="url" id="link-url" required class="w-full pl-10 pr-4 py-2 border rounded-lg outline-none focus:ring-2 focus:ring-indigo-500" placeholder="https://example.com">
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="grid grid-cols-2 gap-4">
+                             <div>
+                                <label class="block text-sm font-medium text-slate-700 mb-2">เลือกสี</label>
+                                <input type="hidden" id="selected-color" value="#4f46e5">
+                                <div class="flex gap-2 flex-wrap" id="color-palette"></div>
+                            </div>
+                            <div>
+                                <label class="block text-sm font-medium text-slate-700 mb-2">เลือกไอคอน</label>
+                                <input type="hidden" id="selected-icon" value="auto">
+                                <button type="button" id="icon-preview-btn" onclick="toggleIconSelector()" class="flex items-center gap-2 px-3 py-2 border rounded-lg w-full hover:bg-slate-50">
+                                    <span id="icon-preview-display">Auto</span>
+                                    <i data-lucide="chevron-down" class="w-4 h-4 ml-auto text-slate-400"></i>
+                                </button>
+                            </div>
+                        </div>
+                        
+                        <div id="icon-selector-wrapper" class="hidden border rounded-lg p-3 bg-slate-50">
+                            <div class="grid grid-cols-6 gap-2" id="icon-selector-container"></div>
+                        </div>
+
+                        <div class="border-t pt-4">
+                            <div class="flex justify-between items-center mb-3">
+                                <h4 class="text-sm font-bold text-slate-700 flex items-center gap-2">
+                                    <i data-lucide="calendar-clock" class="w-4 h-4 text-indigo-500"></i> ตั้งเวลาเปลี่ยนลิงค์อัตโนมัติ
+                                </h4>
+                                <button type="button" onclick="addScheduleRow()" class="text-xs bg-indigo-50 text-indigo-600 px-2 py-1 rounded hover:bg-indigo-100">
+                                    + เพิ่มกำหนดการ
+                                </button>
+                            </div>
+                            <div class="bg-yellow-50 text-yellow-800 text-xs p-2 rounded mb-2 border border-yellow-100">
+                                ⚠️ เมื่อถึงวัน ลิงค์เก่าจะถูกแทนที่ด้วยลิงค์ใหม่ถาวร (จะถูกบันทึกลง Sheet)
+                            </div>
+                            <div id="schedule-container" class="space-y-3">
+                                <div class="text-xs text-slate-400 text-center py-2" id="no-schedule-msg">ยังไม่มีกำหนดการ</div>
+                            </div>
+                        </div>
+
+                    </div>
+                    <div class="mt-8 flex gap-3">
+                        <button type="button" onclick="closeModal('link-modal')" class="flex-1 px-4 py-2 border border-slate-300 text-slate-700 rounded-lg hover:bg-slate-50">ยกเลิก</button>
+                        <button type="submit" class="flex-1 px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 shadow-lg">บันทึก</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <div id="category-modal" class="fixed inset-0 bg-black/50 z-50 hidden flex items-center justify-center backdrop-blur-sm opacity-0 transition-opacity duration-300">
+        <div class="bg-white rounded-2xl shadow-2xl w-full max-w-sm mx-4 transform scale-95 transition-transform duration-300" id="cat-modal-content">
+            <div class="p-5 border-b bg-slate-50 rounded-t-2xl flex justify-between items-center">
+                <h3 class="text-lg font-bold text-slate-800">จัดการหมวดหมู่</h3>
+                <button onclick="closeModal('category-modal')" class="text-slate-400 hover:text-red-500"><i data-lucide="x" class="w-5 h-5"></i></button>
+            </div>
+            <div class="p-6">
+                <form id="category-form" onsubmit="handleCategorySubmit(event)">
+                    <input type="hidden" id="cat-edit-id">
+                    <div class="space-y-4">
+                        <div>
+                            <label class="block text-sm font-medium text-slate-700 mb-1">ชื่อหมวดหมู่</label>
+                            <input type="text" id="cat-title" required class="w-full px-4 py-2 border rounded-lg outline-none focus:ring-2 focus:ring-slate-500" placeholder="เช่น งานประจำวัน, ลิงค์ส่วนตัว">
+                        </div>
+                    </div>
+                    <div class="mt-6 flex gap-3">
+                        <button type="button" onclick="closeModal('category-modal')" class="flex-1 px-4 py-2 border border-slate-300 text-slate-700 rounded-lg hover:bg-slate-50 text-sm">ยกเลิก</button>
+                        <button type="submit" class="flex-1 px-4 py-2 bg-slate-700 text-white rounded-lg hover:bg-slate-800 shadow-lg text-sm">บันทึก</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // ==========================================
+        // CONFIGURATION: ใส่ลิงค์ Apps Script ของคุณตรงนี้
+        // ==========================================
+        const API_URL = 'https://script.google.com/macros/s/AKfycbw-GBxGsG63orN5kkr3kVey62SC5wEzb-Hfq7XksXtgYLJvfwCOKPRgVc_WBDTNWxpCLA/exec'; //
+        // ==========================================
+
+        const PRESET_ICONS = ['auto', 'briefcase', 'folder', 'file-text', 'mail', 'calendar', 'globe', 'server', 'database', 'cloud', 'cpu', 'monitor', 'smartphone', 'shopping-cart', 'credit-card', 'banknote', 'bar-chart-3', 'pie-chart', 'trending-up', 'users', 'user-circle', 'message-circle', 'slack', 'github', 'youtube', 'facebook', 'music', 'video', 'image', 'settings', 'shield', 'pen-tool'];
+        const COLOR_PALETTE = [{name:'Indigo',code:'#4f46e5'},{name:'Red',code:'#ef4444'},{name:'Orange',code:'#f97316'},{name:'Amber',code:'#f59e0b'},{name:'Green',code:'#22c55e'},{name:'Teal',code:'#14b8a6'},{name:'Sky',code:'#0ea5e9'},{name:'Blue',code:'#2563eb'},{name:'Purple',code:'#9333ea'},{name:'Pink',code:'#ec4899'},{name:'Slate',code:'#475569'},{name:'Black',code:'#000000'}];
+
+        let links = [];
+        let isAdmin = false;
+        let sortableInstance = null;
+        let isSyncing = false;
+
+        function isIE() { return window.navigator.userAgent.indexOf('MSIE ') > -1 || window.navigator.userAgent.indexOf('Trident/') > -1; }
+        function launchURL(url) {
+            if(!url) return;
+            if (isIE()) {
+                try {
+                    var shell = new ActiveXObject("WScript.Shell");
+                    shell.Run('chrome.exe "' + url + '"');
+                } catch (e) { window.open(url, '_blank'); }
+            } else { window.open(url, '_blank'); }
+        }
+
+        // --- DATABASE SYNC FUNCTIONS ---
+        async function loadDataFromSheet() {
+            showLoader(true, "กำลังโหลดข้อมูลจาก Cloud...");
+            try {
+                if(API_URL.includes("ใส่_URL")) {
+                    // Fallback if URL not set
+                    console.warn("API URL not set");
+                    links = [];
+                    renderLinks();
+                    showLoader(false);
+                    Swal.fire('แจ้งเตือน', 'กรุณาใส่ API URL ในโค้ดก่อนใช้งาน', 'warning');
+                    return;
+                }
+
+                const response = await fetch(API_URL);
+                const data = await response.json();
+                
+                if (Array.isArray(data)) {
+                    links = data.map(item => ({ ...item, type: item.type || 'link' }));
+                    processAutoUpdates(); // Check dates immediately after load
+                } else {
+                    links = [];
+                }
+                renderLinks();
+            } catch (error) {
+                console.error("Load Error:", error);
+                Swal.fire('Error', 'ไม่สามารถโหลดข้อมูลได้: ' + error.message, 'error');
+            } finally {
+                showLoader(false);
+            }
+        }
+
+        async function saveDataToSheet(silent = false) {
+            if (isSyncing) return;
+            isSyncing = true;
+            if(!silent) showLoader(true, "กำลังบันทึกข้อมูล...");
+
+            try {
+                await fetch(API_URL, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'text/plain;charset=utf-8' }, // Apps Script handles plain text best to avoid preflight CORS issues sometimes
+                    body: JSON.stringify(links)
+                });
+                if(!silent) Swal.fire({ icon: 'success', title: 'บันทึกเรียบร้อย', timer: 1000, showConfirmButton: false, toast: true, position: 'top-end' });
+            } catch (error) {
+                Swal.fire('บันทึกไม่สำเร็จ', 'ตรวจสอบอินเทอร์เน็ตของคุณ', 'error');
+                console.error("Save Error:", error);
+            } finally {
+                showLoader(false);
+                isSyncing = false;
+            }
+        }
+
+        function showLoader(show, text = "") {
+            const loader = document.getElementById('loader-overlay');
+            const txt = document.getElementById('loader-text');
+            if (show) {
+                txt.textContent = text;
+                loader.classList.remove('hidden', 'opacity-0');
+            } else {
+                loader.classList.add('opacity-0');
+                setTimeout(() => loader.classList.add('hidden'), 300);
+            }
+        }
+        
+        function refreshData() {
+            loadDataFromSheet();
+        }
+
+        // --- Init ---
+        document.addEventListener('DOMContentLoaded', () => {
+            loadDataFromSheet();
+            updateDate();
+            renderIconSelector();
+            renderColorPalette();
+            document.getElementById('year').textContent = new Date().getFullYear();
+            initSortable();
+        });
+
+        // --- Core Logic ---
+        function processAutoUpdates() {
+            const today = new Date().toISOString().split('T')[0];
+            let hasChanges = false;
+
+            links.forEach(item => {
+                if (item.type === 'link' && item.schedules && item.schedules.length > 0) {
+                    const dueSchedules = item.schedules
+                        .filter(s => s.date <= today)
+                        .sort((a, b) => a.date.localeCompare(b.date));
+
+                    if (dueSchedules.length > 0) {
+                        const latest = dueSchedules[dueSchedules.length - 1];
+                        item.url = latest.url;
+                        if (latest.name) item.name = latest.name;
+                        item.schedules = item.schedules.filter(s => s.date > today);
+                        hasChanges = true;
+                    }
+                }
+            });
+
+            if (hasChanges) {
+                saveDataToSheet(true); // Auto save if updates occurred
+                renderLinks();
+            }
+        }
+
+        // --- Sortable JS Logic ---
+        function initSortable() {
+            const grid = document.getElementById('links-grid');
+            sortableInstance = new Sortable(grid, {
+                animation: 150,
+                ghostClass: 'sortable-ghost',
+                dragClass: 'sortable-drag',
+                delay: 100, delayOnTouchOnly: true,
+                disabled: true, 
+                onEnd: function (evt) {
+                    const newOrderIds = Array.from(grid.children).map(el => el.getAttribute('data-id'));
+                    const newLinks = [];
+                    newOrderIds.forEach(id => {
+                        const found = links.find(l => l.id == id);
+                        if(found) newLinks.push(found);
+                    });
+                    links = newLinks;
+                    saveDataToSheet(true); // Silent save on reorder
+                }
+            });
+        }
+
+        // --- UI Logic ---
+        function toggleAdminMode() {
+            isAdmin = !isAdmin;
+            updateUIState();
+            Swal.fire({ icon: 'success', title: isAdmin ? 'เข้าสู่โหมดแก้ไข' : 'ออกจากโหมดแก้ไข', timer: 1000, showConfirmButton: false, toast: true, position: 'top-end' });
+        }
+
+        function updateUIState() {
+            const btn = document.getElementById('admin-btn');
+            const icon = document.getElementById('lock-icon');
+            const text = document.getElementById('admin-text');
+            const toolbar = document.getElementById('admin-toolbar');
+            const grid = document.getElementById('links-grid');
+
+            if(sortableInstance) sortableInstance.option('disabled', !isAdmin);
+            grid.classList.toggle('editing-mode', isAdmin);
+
+            if (isAdmin) {
+                btn.classList.replace('bg-slate-700', 'bg-red-500');
+                btn.classList.replace('hover:bg-slate-600', 'hover:bg-red-600');
+                icon.setAttribute('data-lucide', 'unlock');
+                text.textContent = 'ออกจากโหมดแก้ไข';
+                toolbar.classList.remove('hidden');
+            } else {
+                btn.classList.replace('bg-red-500', 'bg-slate-700');
+                btn.classList.replace('hover:bg-red-600', 'hover:bg-slate-600');
+                icon.setAttribute('data-lucide', 'edit-3');
+                text.textContent = 'โหมดแก้ไข';
+                toolbar.classList.add('hidden');
+            }
+            lucide.createIcons();
+            renderLinks();
+        }
+
+        // --- Helper Rendering ---
+        function renderIconSelector() {
+            const container = document.getElementById('icon-selector-container');
+            container.innerHTML = '';
+            PRESET_ICONS.forEach(iconName => {
+                const btn = document.createElement('button');
+                btn.type = 'button';
+                btn.className = 'icon-btn w-8 h-8 rounded-md border border-slate-200 hover:bg-slate-50 flex items-center justify-center transition-all';
+                btn.onclick = () => { selectIcon(iconName, btn); toggleIconSelector(); };
+                btn.dataset.icon = iconName;
+                if (iconName === 'auto') btn.innerHTML = `<span class="text-[10px] font-bold">Auto</span>`;
+                else btn.innerHTML = `<i data-lucide="${iconName}" class="w-4 h-4"></i>`;
+                container.appendChild(btn);
+            });
+        }
+        function toggleIconSelector() {
+            document.getElementById('icon-selector-wrapper').classList.toggle('hidden');
+        }
+        function renderColorPalette() {
+            const container = document.getElementById('color-palette');
+            container.innerHTML = '';
+            COLOR_PALETTE.forEach(color => {
+                const btn = document.createElement('button');
+                btn.type = 'button';
+                btn.className = 'color-btn w-6 h-6 rounded-full border border-slate-200 shadow-sm';
+                btn.style.backgroundColor = color.code;
+                btn.style.color = color.code;
+                btn.onclick = () => selectColor(color.code, btn);
+                btn.dataset.color = color.code;
+                container.appendChild(btn);
+            });
+        }
+        function selectIcon(iconName, btnElement) {
+            document.getElementById('selected-icon').value = iconName;
+            document.querySelectorAll('.icon-btn').forEach(b => b.classList.remove('selected'));
+            if(btnElement) btnElement.classList.add('selected');
+            
+            const display = document.getElementById('icon-preview-display');
+            if(iconName === 'auto') display.textContent = 'Auto (From Web)';
+            else display.innerHTML = `<span class="flex items-center gap-2"><i data-lucide="${iconName}" class="w-4 h-4"></i> ${iconName}</span>`;
+            lucide.createIcons();
+        }
+        function selectColor(colorCode, btnElement) {
+            document.getElementById('selected-color').value = colorCode;
+            document.querySelectorAll('.color-btn').forEach(b => b.classList.remove('selected'));
+            btnElement.classList.add('selected');
+        }
+
+        // --- Schedule UI Logic ---
+        function addScheduleRow(data = {}) {
+            const container = document.getElementById('schedule-container');
+            document.getElementById('no-schedule-msg').classList.add('hidden');
+            
+            const div = document.createElement('div');
+            div.className = 'schedule-item flex flex-col sm:flex-row gap-2 bg-white border p-2 rounded-lg relative group';
+            div.innerHTML = `
+                <div class="flex-none w-full sm:w-auto">
+                    <label class="text-[10px] text-slate-400 block mb-0.5">เปลี่ยนวันที่</label>
+                    <input type="date" class="sched-date w-full sm:w-36 text-sm border rounded px-2 py-1 outline-none focus:border-indigo-500" value="${data.date || ''}" required>
+                </div>
+                <div class="flex-1 space-y-2">
+                    <div>
+                         <label class="text-[10px] text-slate-400 block mb-0.5">URL ใหม่</label>
+                        <input type="url" class="sched-url w-full text-sm border rounded px-2 py-1 outline-none focus:border-indigo-500" placeholder="https://..." value="${data.url || ''}" required>
+                    </div>
+                    <div>
+                        <label class="text-[10px] text-slate-400 block mb-0.5">ชื่อใหม่ (เลือกใส่)</label>
+                        <input type="text" class="sched-name w-full text-sm border rounded px-2 py-1 outline-none focus:border-indigo-500" placeholder="ชื่อที่จะแสดง" value="${data.name || ''}">
+                    </div>
+                </div>
+                <button type="button" onclick="this.closest('.schedule-item').remove(); checkEmptySchedule();" class="absolute top-1 right-1 text-slate-300 hover:text-red-500 p-1">
+                    <i data-lucide="x-circle" class="w-4 h-4"></i>
+                </button>
+            `;
+            container.appendChild(div);
+            lucide.createIcons();
+        }
+
+        function checkEmptySchedule() {
+            const container = document.getElementById('schedule-container');
+            if (container.querySelectorAll('.schedule-item').length === 0) {
+                document.getElementById('no-schedule-msg').classList.remove('hidden');
+            }
+        }
+
+        // --- Submit Link ---
+        async function handleFormSubmit(e) {
+            e.preventDefault();
+            const id = document.getElementById('edit-id').value;
+            const name = document.getElementById('link-name').value;
+            let url = document.getElementById('link-url').value;
+            const icon = document.getElementById('selected-icon').value;
+            const color = document.getElementById('selected-color').value;
+
+            if (url && !url.startsWith('http://') && !url.startsWith('https://')) url = 'https://' + url;
+
+            const schedules = [];
+            document.querySelectorAll('.schedule-item').forEach(row => {
+                const sDate = row.querySelector('.sched-date').value;
+                let sUrl = row.querySelector('.sched-url').value;
+                const sName = row.querySelector('.sched-name').value;
+                if (sDate && sUrl) {
+                    if (!sUrl.startsWith('http://') && !sUrl.startsWith('https://')) sUrl = 'https://' + sUrl;
+                    schedules.push({ date: sDate, url: sUrl, name: sName });
+                }
+            });
+
+            const linkData = { type: 'link', name, url, icon, color, schedules };
+
+            if (id) {
+                const index = links.findIndex(l => l.id == id);
+                if (index !== -1) links[index] = { ...links[index], ...linkData };
+            } else {
+                links.push({ id: Date.now(), ...linkData });
+            }
+            
+            closeModal('link-modal');
+            await saveDataToSheet();
+        }
+
+        // --- Submit Category ---
+        async function handleCategorySubmit(e) {
+            e.preventDefault();
+            const id = document.getElementById('cat-edit-id').value;
+            const title = document.getElementById('cat-title').value;
+
+            const catData = { type: 'category', title: title };
+
+            if (id) {
+                const index = links.findIndex(l => l.id == id);
+                if (index !== -1) links[index] = { ...links[index], ...catData };
+            } else {
+                links.push({ id: Date.now(), ...catData });
+            }
+            closeModal('category-modal');
+            await saveDataToSheet();
+        }
+
+        function deleteItem(id) {
+            Swal.fire({
+                title: 'ยืนยันลบ?', icon: 'warning', showCancelButton: true, confirmButtonColor: '#ef4444', confirmButtonText: 'ลบ', cancelButtonText: 'ยกเลิก'
+            }).then(async (res) => {
+                if (res.isConfirmed) {
+                    links = links.filter(l => l.id !== id);
+                    await saveDataToSheet();
+                }
+            });
+        }
+
+        // --- Render Grid ---
+        function renderLinks(filterText = '') {
+            const grid = document.getElementById('links-grid');
+            const emptyState = document.getElementById('empty-state');
+            grid.innerHTML = '';
+            
+            const filteredLinks = links.filter(item => {
+                if(item.type === 'category') return true;
+                return item.name.toLowerCase().includes(filterText.toLowerCase()) || 
+                       item.url.toLowerCase().includes(filterText.toLowerCase())
+            });
+
+            if (filteredLinks.length === 0) {
+                emptyState.classList.remove('hidden');
+            } else {
+                emptyState.classList.add('hidden');
+                filteredLinks.forEach(item => {
+                    
+                    // --- RENDER CATEGORY ---
+                    if (item.type === 'category') {
+                        const div = document.createElement('div');
+                        div.className = 'category-divider py-4 flex items-center gap-4 group draggable-item select-none';
+                        div.setAttribute('data-id', item.id);
+                        
+                        let actions = '';
+                        if (isAdmin) {
+                            actions = `
+                                <div class="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                                    <button onclick="openCategoryModal(${item.id})" class="p-1 text-slate-400 hover:text-indigo-600"><i data-lucide="pen-line" class="w-4 h-4"></i></button>
+                                    <button onclick="deleteItem(${item.id})" class="p-1 text-slate-400 hover:text-red-500"><i data-lucide="trash-2" class="w-4 h-4"></i></button>
+                                </div>
+                            `;
+                        }
+
+                        div.innerHTML = `
+                            <div class="divider-line"></div>
+                            <span class="text-slate-500 font-semibold uppercase tracking-wider text-sm bg-slate-200/50 px-3 py-1 rounded-lg border border-slate-200">${item.title}</span>
+                            <div class="divider-line"></div>
+                            ${actions}
+                        `;
+                        grid.appendChild(div);
+                        return;
+                    }
+
+                    // --- RENDER LINK ---
+                    let iconHtml = '';
+                    const linkColor = item.color || '#4f46e5';
+
+                    if (!item.icon || item.icon === 'auto') {
+                        let domain = 'example.com';
+                        try { domain = new URL(item.url).hostname; } catch(e){}
+                        const faviconUrl = `https://www.google.com/s2/favicons?domain=${domain}&sz=64`;
+                        iconHtml = `<img src="${faviconUrl}" alt="icon" class="w-8 h-8 object-contain" onerror="this.src='https://icons.duckduckgo.com/ip3/${domain}.ico'">`;
+                    } else {
+                        iconHtml = `<i data-lucide="${item.icon}" style="color: ${linkColor}" class="w-8 h-8"></i>`;
+                    }
+
+                    const hasFutureSchedule = item.schedules && item.schedules.some(s => s.date > new Date().toISOString().split('T')[0]);
+                    const scheduledBadge = hasFutureSchedule ? 
+                        `<div class="absolute top-2 left-2 w-2 h-2 rounded-full bg-indigo-300" title="มีกำหนดการเปลี่ยนในอนาคต"></div>` : '';
+
+                    const card = document.createElement('div');
+                    card.className = 'glass-panel p-5 rounded-xl shadow-sm card-hover relative group border transition-all duration-200 draggable-item';
+                    card.setAttribute('data-id', item.id);
+                    
+                    let actions = '';
+                    if (isAdmin) {
+                        actions = `
+                            <div class="absolute top-2 right-2 flex gap-1 z-10 opacity-0 group-hover:opacity-100 transition-opacity">
+                                <button onclick="event.stopPropagation(); openEditModal(${item.id})" class="p-1.5 bg-indigo-50 text-indigo-600 rounded-full hover:bg-indigo-600 hover:text-white transition-all shadow-sm"><i data-lucide="pen-line" class="w-3.5 h-3.5"></i></button>
+                                <button onclick="event.stopPropagation(); deleteItem(${item.id})" class="p-1.5 bg-red-50 text-red-500 rounded-full hover:bg-red-500 hover:text-white transition-all shadow-sm"><i data-lucide="trash-2" class="w-3.5 h-3.5"></i></button>
+                            </div>
+                        `;
+                    }
+
+                    card.innerHTML = `
+                        ${actions}
+                        ${scheduledBadge}
+                        <div onclick="if(!event.target.closest('button')) launchURL('${item.url}')" class="flex flex-col items-center text-center h-full w-full pointer-events-auto cursor-pointer">
+                            <div class="w-14 h-14 bg-white rounded-2xl shadow-sm flex items-center justify-center mb-4 p-2 border border-slate-100" style="border-bottom: 3px solid ${linkColor}">
+                                ${iconHtml}
+                            </div>
+                            <h3 class="font-medium text-slate-800 line-clamp-1 w-full select-none" title="${item.name}">${item.name}</h3>
+                            <p class="text-xs text-slate-400 mt-1 line-clamp-1 w-full truncate opacity-70 select-none">${item.url}</p>
+                        </div>
+                    `;
+                    grid.appendChild(card);
+                });
+                lucide.createIcons();
+            }
+        }
+
+        function filterLinks() {
+            const text = document.getElementById('search-input').value;
+            renderLinks(text);
+        }
+
+        // --- Modal Functions ---
+        function openAddModal() { 
+            resetLinkModal(); 
+            document.getElementById('modal-title').textContent = "เพิ่มลิงค์ใหม่"; 
+            showModal('link-modal'); 
+        }
+        function openEditModal(id) {
+            const item = links.find(l => l.id === id); if (!item || item.type === 'category') return;
+            resetLinkModal(); 
+            document.getElementById('modal-title').textContent = "แก้ไขลิงค์";
+            document.getElementById('edit-id').value = item.id; 
+            document.getElementById('link-name').value = item.name; 
+            document.getElementById('link-url').value = item.url;
+            
+            const color = item.color || '#4f46e5';
+            const colorBtn = document.querySelector(`.color-btn[data-color="${color}"]`) || document.querySelector('.color-btn');
+            if (colorBtn) selectColor(color, colorBtn);
+            
+            const icon = item.icon || 'auto';
+            const iconBtn = document.querySelector(`.icon-btn[data-icon="${icon}"]`) || document.querySelector('.icon-btn');
+            if (iconBtn) selectIcon(icon); else selectIcon('auto');
+
+            if (item.schedules && item.schedules.length > 0) {
+                item.schedules.forEach(s => addScheduleRow(s));
+            } else {
+                checkEmptySchedule();
+            }
+            showModal('link-modal');
+        }
+
+        function openCategoryModal(id = null) {
+            document.getElementById('category-form').reset();
+            document.getElementById('cat-edit-id').value = '';
+            
+            if (id) {
+                const item = links.find(l => l.id === id);
+                if (item) {
+                    document.getElementById('cat-edit-id').value = item.id;
+                    document.getElementById('cat-title').value = item.title;
+                }
+            }
+            showModal('category-modal');
+            setTimeout(() => document.getElementById('cat-title').focus(), 100);
+        }
+
+        function resetLinkModal() {
+            document.getElementById('link-form').reset(); 
+            document.getElementById('edit-id').value = '';
+            document.getElementById('schedule-container').innerHTML = '<div class="text-xs text-slate-400 text-center py-2" id="no-schedule-msg">ยังไม่มีกำหนดการ</div>';
+            
+            const defaultColorBtn = document.querySelector('.color-btn[data-color="#4f46e5"]'); 
+            if(defaultColorBtn) selectColor('#4f46e5', defaultColorBtn);
+            selectIcon('auto');
+            document.getElementById('icon-selector-wrapper').classList.add('hidden');
+        }
+
+        function showModal(modalId) {
+            const modal = document.getElementById(modalId);
+            const content = modal.querySelector('div[class*="transform"]');
+            modal.classList.remove('hidden');
+            setTimeout(() => { 
+                modal.classList.remove('opacity-0'); 
+                content.classList.remove('scale-95'); 
+                content.classList.add('scale-100'); 
+            }, 10);
+        }
+
+        function closeModal(modalId) {
+            const modal = document.getElementById(modalId);
+            const content = modal.querySelector('div[class*="transform"]');
+            modal.classList.add('opacity-0'); 
+            content.classList.remove('scale-100'); 
+            content.classList.add('scale-95');
+            setTimeout(() => { modal.classList.add('hidden'); }, 300);
+        }
+
+        document.getElementById('link-modal').addEventListener('click', (e) => { if (e.target.id === 'link-modal') closeModal('link-modal'); });
+        document.getElementById('category-modal').addEventListener('click', (e) => { if (e.target.id === 'category-modal') closeModal('category-modal'); });
+
+        function updateDate() { const options = { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' }; document.getElementById('current-date').textContent = new Date().toLocaleDateString('th-TH', options); }
+
+    </script>
+</body>
+</html>
